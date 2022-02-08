@@ -1,0 +1,337 @@
+---
+title: "Exercise 2.4 - Finishing the Policy"
+workshops: selinux_policy
+workshop_weight: 24
+layout: lab
+---
+
+:license_url: http://ansible-workshop-bos.redhatgov.io/wslic.txt
+:icons: font
+:imagesdir: /workshops/selinux_policy/images
+
+= Exercise 2.4 - Finishing the Policy
+
+
+== Exercise Description
+
+In this final exercise, we will finish the `testapp` SELinux policy.
+
+== Section 1: A Last-ish Interface
+
+=== Step 1: Check for AVC denials
+
+Let's again restart our app, to get an updated list of denials.  
+
+{{< highlight bash >}}
+systemctl restart testapp
+{{< /highlight >}}
+
+We only have a few denials left, and you will see that they all (probably!) reference `/etc/resolv.conf` or to `/etc/hosts`.
+
+{{< highlight bash >}}
+ausearch -m AVC -ts recent | egrep '^type=AVC'
+{{< /highlight >}}
+
+[source,bash]
+-----
+type=AVC msg=audit(1553195947.854:3270): avc:  denied  { getattr } for  pid=4651 comm="testapp" path="/etc/resolv.conf" dev="dm-0" ino=9311517 scontext=system_u:system_r:testapp_t:s0 tcontext=system_u:object_r:net_conf_t:s0 tclass=file permissive=1
+type=AVC msg=audit(1553195947.854:3271): avc:  denied  { open } for  pid=4651 comm="testapp" path="/etc/hosts" dev="dm-0" ino=8389746 scontext=system_u:system_r:testapp_t:s0 tcontext=system_u:object_r:net_conf_t:s0 tclass=file permissive=1
+type=AVC msg=audit(1553195947.854:3271): avc:  denied  { read } for  pid=4651 comm="testapp" name="hosts" dev="dm-0" ino=8389746 scontext=system_u:system_r:testapp_t:s0 tcontext=system_u:object_r:net_conf_t:s0 tclass=file permissive=1
+-----
+
+=== Step 2: Interpret AVC messages
+
+From the AVCs that we have, it seems clear that the application wants to try to resolve some hostnames to IP addresses.  Most applications that access the network will need to be able to read system network configuration, and the interface for that is in `/usr/share/selinux/devel/include/system/sysnetwork.if` and is called `sysnet_read_config`.
+
+[source,bash]
+-----
+#######################################
+## <summary>
+##      Read network config files.
+## </summary>
+## <desc>
+##      <p>
+##      Allow the specified domain to read the
+##      general network configuration files.  A
+##      common example of this is the
+##      /etc/resolv.conf file, which has domain
+##      name system (DNS) server IP addresses.
+##      Typically, most networking processes will
+##      require the access provided by this interface.
+##      </p>
+##      <p>
+##      Higher-level interfaces which involve
+##      networking will generally call this interface,
+##      for example:
+##      </p>
+##      <ul>
+##              <li>sysnet_dns_name_resolve()</li>
+##              <li>sysnet_use_ldap()</li>
+##              <li>sysnet_use_portmap()</li>
+##      </ul>
+## </desc>
+## <param name="domain">
+##      <summary>
+##      Domain allowed access.
+##      </summary>
+## </param>
+#
+interface(`sysnet_read_config',`
+        gen_require(`
+                type net_conf_t;
+        ')
+
+        files_search_etc($1)
+        allow $1 net_conf_t:file read_file_perms;
+
+        ifdef(`distro_debian',`
+                files_search_pids($1)
+                allow $1 net_conf_t:dir list_dir_perms;
+                read_files_pattern($1, net_conf_t, net_conf_t)
+        ')
+
+        ifdef(`distro_redhat',`
+        files_search_all_pids($1)
+        init_search_pid_dirs($1)
+                allow $1 net_conf_t:dir list_dir_perms;
+                allow $1 net_conf_t:lnk_file read_lnk_file_perms;
+                read_files_pattern($1, net_conf_t, net_conf_t)
+        ')
+')
+-----
+
+=== Step 3: Add the interface
+
+So, as before, add an interface to your `testapp.te` file, using a line like this:
+
+[source,bash]
+-----
+sysnet_read_config(testapp_t)
+-----
+
+And compile your policy, and restart the service:
+
+{{< highlight bash >}}
+./testapp.sh
+systemctl restart testapp
+{{< /highlight >}}
+
+...and last, check to see if there are still any AVC denials:
+
+{{< highlight bash >}}
+systemctl restart testapp
+ausearch -m AVC -ts recent | wc -l
+{{< /highlight >}}
+
+[source,bash]
+-----
+14
+-----
+
+Ah, well! Let's try to handle those last AVCs.
+
+== Section 2: A Last Interface (no, really!)
+
+=== Step 1: Check for AVC denials
+
+Let's get an updated list of denials:  
+
+{{< highlight bash >}}
+ausearch -m AVC -ts recent | egrep '^type=AVC'
+{{< /highlight >}}
+
+The last few denials should reference `openssl` and `pki`:
+
+[source,bash]
+-----
+ausearch -m AVC -ts recent
+----
+time->Tue Jun 29 15:36:12 2021
+type=PROCTITLE msg=audit(1624980972.923:10134): proctitle="/usr/local/sbin/testapp"
+type=PATH msg=audit(1624980972.923:10134): item=0 name="/etc/pki/tls/openssl.cnf" inode=5283193 dev=103:02 mode=0100644 ouid=0 ogid=0 rdev=00:00 obj=system_u:object_r:cert_t:s0 nametype=NORMAL cap_fp=0 cap_fi=0 cap_fe=0 cap_fver=0 cap_frootid=0
+type=CWD msg=audit(1624980972.923:10134): cwd="/"
+type=SYSCALL msg=audit(1624980972.923:10134): arch=c000003e syscall=257 success=yes exit=3 a0=ffffff9c a1=15c12a0 a2=0 a3=0 items=1 ppid=63073 pid=63074 auid=4294967295 uid=0 gid=0 euid=0 suid=0 fsuid=0 egid=0 sgid=0 fsgid=0 tty=(none) ses=4294967295 comm="testapp" exe="/usr/local/sbin/testapp" subj=system_u:system_r:testapp_t:s0 key=(null)
+type=AVC msg=audit(1624980972.923:10134): avc:  denied  { open } for  pid=63074 comm="testapp" path="/etc/pki/tls/openssl.cnf" dev="nvme0n1p2" ino=5283193 scontext=system_u:system_r:testapp_t:s0 tcontext=system_u:object_r:cert_t:s0 tclass=file permissive=1
+type=AVC msg=audit(1624980972.923:10134): avc:  denied  { read } for  pid=63074 comm="testapp" name="openssl.cnf" dev="nvme0n1p2" ino=5283193 scontext=system_u:system_r:testapp_t:s0 tcontext=system_u:object_r:cert_t:s0 tclass=file permissive=1
+type=AVC msg=audit(1624980972.923:10134): avc:  denied  { search } for  pid=63074 comm="testapp" name="pki" dev="nvme0n1p2" ino=8410010 scontext=system_u:system_r:testapp_t:s0 tcontext=system_u:object_r:cert_t:s0 tclass=dir permissive=1
+----
+time->Tue Jun 29 15:36:12 2021
+type=PROCTITLE msg=audit(1624980972.923:10135): proctitle="/usr/local/sbin/testapp"
+type=SYSCALL msg=audit(1624980972.923:10135): arch=c000003e syscall=5 success=yes exit=0 a0=3 a1=7ffcd2c0c890 a2=7ffcd2c0c890 a3=7fa695266e80 items=0 ppid=63073 pid=63074 auid=4294967295 uid=0 gid=0 euid=0 suid=0 fsuid=0 egid=0 sgid=0 fsgid=0 tty=(none) ses=4294967295 comm="testapp" exe="/usr/local/sbin/testapp" subj=system_u:system_r:testapp_t:s0 key=(null)
+type=AVC msg=audit(1624980972.923:10135): avc:  denied  { getattr } for  pid=63074 comm="testapp" path="/etc/pki/tls/openssl.cnf" dev="nvme0n1p2" ino=5283193 scontext=system_u:system_r:testapp_t:s0 tcontext=system_u:object_r:cert_t:s0 tclass=file permissive=1
+-----
+
+=== Step 2: Find an interface
+
+Let's search for an interface, referencing `ssl certificate` and `read` as that's what's being reported:
+
+{{< highlight bash >}}
+find /usr/share/selinux/devel/include -type f -name "*.if" -exec grep -iH 'ssl certificate' {} \; | grep -i read
+{{< /highlight >}}
+
+[source,bash]
+-----
+/usr/share/selinux/devel/include/system/miscfiles.if:## Read all SSL certificates.
+/usr/share/selinux/devel/include/system/miscfiles.if:## Read all SSL certificates.
+/usr/share/selinux/devel/include/system/miscfiles.if:## Read generic SSL certificates.
+/usr/share/selinux/devel/include/system/miscfiles.if:## Read SSL certificates.
+/usr/share/selinux/devel/include/system/userdomain.if:##        Read system SSL certificates in the users homedir.
+-----
+
+From the list above, we aren't touching `home directories`, so the others are involved with reading SSL certificates. Let's open `miscfiles.if` and see what we can find, that matches the most basic, `Read generic SSL certificates`:
+
+[source,bash]
+-----
+########################################
+## <summary>
+##      Read generic SSL certificates.
+## </summary>
+## <param name="domain">
+##      <summary>
+##      Domain allowed access.
+##      </summary>
+## </param>
+## <rolecap/>
+#
+interface(`miscfiles_read_generic_certs',`
+-----
+
+
+=== Step 3: Add the interface
+
+So, as before, add the interface to your `testapp.te` file, using a line like this:
+
+[source,bash]
+-----
+miscfiles_read_generic_certs(testapp_t) 
+-----
+
+=== Step 4: Recompile the policy
+
+Now, let's recompile the policy, and reload it into memory.
+
+{{< highlight bash >}}
+./testapp.sh
+{{< /highlight >}}
+
+=== Step 5: Restart the application
+
+To see if that fixed the problem, let's restart the application:
+
+{{< highlight bash >}}
+systemctl restart testapp
+{{< /highlight >}}
+
+...and see if there are any AVC messages left:
+
+{{< highlight bash >}}
+ausearch -m AVC -ts recent | egrep 'tcp|udp' | wc -l
+{{< /highlight >}}
+
+[source,bash] 
+----
+0
+----
+
+Fantastic, we've knocked them all out.
+
+== Section 3: Set Enforcing Mode
+
+=== Step 1: Change the Domain to Enforcing
+
+The last step that we need to take is to change our `testapp.te` file, so that the domain is enforcing.  All we need to do, to accomplish this, is to comment out the line that says:
+
+[source,bash] 
+----
+permissive testapp_t;
+----
+
+Once we do that, the final version of your policy should look like this:
+
+{{< highlight bash >}}
+cat testapp.te
+{{< /highlight >}}
+
+[source,bash] 
+----
+policy_module(testapp, 1.0.0)
+
+########################################
+#
+# Declarations
+#
+
+type testapp_t;
+type testapp_exec_t;
+init_daemon_domain(testapp_t, testapp_exec_t)
+
+permissive testapp_t;
+
+type testapp_var_run_t;
+files_pid_file(testapp_var_run_t)
+
+########################################
+#
+# testapp local policy
+#
+allow testapp_t self:process { fork };
+allow testapp_t self:fifo_file rw_fifo_file_perms;
+allow testapp_t self:tcp_socket { connect create getattr getopt setopt };
+allow testapp_t self:udp_socket { connect create getattr setopt };
+allow testapp_t self:unix_stream_socket create_stream_socket_perms;
+
+manage_dirs_pattern(testapp_t, testapp_var_run_t, testapp_var_run_t)
+manage_files_pattern(testapp_t, testapp_var_run_t, testapp_var_run_t)
+manage_lnk_files_pattern(testapp_t, testapp_var_run_t, testapp_var_run_t)
+miscfiles_read_generic_certs(testapp_t)
+files_pid_filetrans(testapp_t, testapp_var_run_t, { dir file lnk_file })
+
+corenet_tcp_connect_http_port(testapp_t)
+
+domain_use_interactive_fds(testapp_t)
+
+files_read_etc_files(testapp_t)
+
+kernel_read_system_state(testapp_t)
+
+logging_send_syslog_msg(testapp_t)
+
+miscfiles_read_localization(testapp_t)
+
+sysnet_read_config(testapp_t)
+----
+
+=== Step 3: Recompile and reload the policy
+
+Now, let's recompile the policy, and reload it into memory.
+
+{{< highlight bash >}}
+./testapp.sh
+{{< /highlight >}}
+
+=== Step 4: Restart the application
+
+To see if that fixed the problem, let's restart the application:
+
+{{< highlight bash >}}
+systemctl restart testapp
+{{< /highlight >}}
+
+...and see if there are any AVC messages left:
+
+{{< highlight bash >}}
+ausearch -m AVC -ts recent | egrep 'tcp|udp' | wc -l
+{{< /highlight >}}
+
+[source,bash] 
+----
+0
+----
+
+And we are done.
+
+== End Result
+
+This is the conclusion of the SELinux policy workshop.  Please ask any questions that you have left, and thanks so much for coming!
+
+{{< importPartial "footer/footer.html" >}}

@@ -1,0 +1,420 @@
+---
+title: "Lab 3.0 - Intro to Podman and base images"
+workshops: security_container_intro
+workshop_weight: 30
+layout: lab
+---
+
+:GUID: %guid%
+:markup-in-source: verbatim,attributes,quotes
+:toc:
+
+:badges:
+:icons: font
+:imagesdir: /workshops/security_container_intro/images
+:source-highlighter: highlight.js
+:source-language: yaml
+
+== What is a pod?
+
+A pod is a group of one or more containers with shared storage, network and a specification for how to run the containers. In this module you'll be working at the container level. Since you are here to learn more about
+container security, we have a quick review of 
+container basics then get right into the good stuff. 
+
+Podman (Pod Manager) is a fully featured container engine that is a simple daemon-less tool. Podman provides a Docker-CLI comparable command line experience that eases the transition and allows the management of pods, containers and images. Simply put, `alias docker=podman`. 
+
+Also, most `podman` commands can be run as a regular,
+non-root user, without requiring additional privileges. This presents significant security and auditing advantages
+over client-server based architectures.
+
+=== The Universal Base Image
+
+The container image that you will be using through out most of this lab is the RHEL 8 Universal Base Image https://access.redhat.com/containers/#/product/5c180b28bed8bd75a2c29a63[(UBI)]. The UBI is designed and engineered to be the base layer for containerized applications, middleware and utilities. This base image is freely distributable. However, Red Hat only supports Red Hat technologies through subscriptions for Red Hat products. When you get a chance, read more about https://access.redhat.com/documentation/en-us/red_hat_enterprise_linux_atomic_host/7/html-single/getting_started_with_containers/index#using_red_hat_universal_base_images_standard_minimal_and_runtimes[ using the UBI]. 
+
+For this first part of the lab, we will be using the most current Fedora (the community upstream distribution for Red Hat Enterprise Linux) container image.
+
+Pull the latest Fedora image from RedHat's container registry:
+[source,bash]
+----
+podman pull fedora:latest
+----
+....
+Resolved "fedora" as an alias (/etc/containers/registries.conf.d/000-shortnames.conf)
+Trying to pull registry.fedoraproject.org/fedora:latest...
+Getting image source signatures
+Copying blob ca594071dfff done
+Copying config abec9a7a7d done
+Writing manifest to image destination
+Storing signatures
+abec9a7a7dc640768e6dc51b6a5728e470411615c62e9ff46215206bde816772
+....
+
+Now do the same as the root user:
+[source,bash]
+----
+sudo podman pull fedora:latest
+----
+
+Notice that pulling Fedora does not require authentication from RedHat's registries.
+
+Next, we'll work with the registries that were configured
+in the previous modules.
+
+=== Tagging and pushing images to a remote registry
+
+Before an image can be pushed to a registry, it must be tagged 
+appropriately.
+
+Confirm the pull worked:
+[source,bash]
+----
+podman images
+----
+....
+REPOSITORY                            TAG      IMAGE ID       CREATED      SIZE
+registry.fedoraproject.org/fedora  latest  abec9a7a7dc6  4 weeks ago  184 MB
+....
+
+Next tag the image for the remote registry hosted at `{{< urifqdnrev "" "node1" "" >}}`:
+[source,bash]
+----
+podman tag fedora {{< urifqdnrev "" "node1" ":5000/fedora/latest" >}}
+----
+
+Confirm the tag is correct:
+[source,bash]
+----
+podman images
+----
+....
+REPOSITORY                            TAG      IMAGE ID       CREATED      SIZE
+registry.fedoraproject.org/fedora             latest  abec9a7a7dc6  4 weeks ago  184 MB
+node1.0.jajcsec.rhnaps.io:5000/fedora/latest  latest  abec9a7a7dc6  4 weeks ago  184 MB
+....
+
+Login to the `{{< urifqdnrev "" "node1" "" >}}` registry. Do the same for `{{< urifqdnrev "" "node2" "" >}}`. Both of these actions should be taken from `{{< urifqdnrev "" "bastion" "" >}}`:
+
+[source,bash]
+----
+podman login -u redhat -p redhat {{< urifqdnrev "" "node1" ":5000" >}}
+----
+....
+Login Succeeded!
+....
+----
+podman login -u redhat -p redhat {{< urifqdnrev "" "node2" ":5000" >}}
+----
+....
+Login Succeeded!
+....
+
+Finally, push the image:
+[source,bash]
+----
+podman push {{< urifqdnrev "" "node1" ":5000/fedora/latest" >}}
+----
+....
+Getting image source signatures
+Copying blob 8da573feae5f: 205.77 MiB / 205.77 MiB [========================] 5s
+Copying blob 6ef321d2357f: 10.00 KiB / 10.00 KiB [==========================] 5s
+Copying config cc7efd763847: 0 B / 4.36 KiB [-------------------------------] 0s
+Writing manifest to image destination
+Writing manifest to image destination
+Storing signatures
+....
+
+Confirm the push succeeded and the repository was created:
+[source,bash]
+----
+curl --user redhat:redhat {{< urifqdnrev "https://" "node1" ":5000/v2/_catalog" >}}
+----
+....
+{"repositories":["fedora/latest"]}
+....
+
+=== Working with root and rootless containers.
+
+Podman supports storing and running root and rootless containers. Effectively, each user manages it's own containers.
+
+The UBI container images should be loaded into the podman's local image storage for both root and rootless (ec2-user) usage. 
+
+Confirm these images exist using `podman`. Note the `podman` command may be run as **root** (privileged) or as a **root-less** (non-privileged) user.
+
+Examine container image storage:
+[source,bash]
+----
+sudo podman images
+podman images
+----
+....
+REPOSITORY                            TAG      IMAGE ID       CREATED       SIZE
+registry.fedoraproject.org/fedora             latest  abec9a7a7dc6  4 weeks ago  184 MB
+node1.0.jajcsec.rhnaps.io:5000/fedora/latest  latest  abec9a7a7dc6  4 weeks ago  184 MB
+....
+
+Where are the images actually stored? Here is a clue:
+[source,bash]
+----
+cat /etc/containers/storage.conf
+----
+
+Let's start with a few warmup exercises. Note that a random _container ID_ is returned when the container starts.
+
+Run a rootless container:
+[source,bash]
+----
+podman run --name=rootless -d registry.access.redhat.com/ubi8/ubi sleep 999
+----
+....
+Trying to pull registry.access.redhat.com/ubi8/ubi:latest...
+Getting image source signatures
+Checking if image destination supports signatures
+Copying blob 5f6bf015319e done
+Copying blob 45cc8b7f2b43 done
+Copying config 8215cb84fa done
+Writing manifest to image destination
+Storing signatures
+815dd74131decfed827b4087785e54b780eef12e44392ff1146c31179b29a855
+....
+
+Examine the running containers:
+[source,bash]
+----
+podman ps
+----
+....
+CONTAINER ID  IMAGE                                       COMMAND    CREATED         STATUS             PORTS  NAMES
+e05c3fc400eb  ubi8/ubi:latest  sleep 999  2 seconds ago   Up 2 seconds ago          rootless
+....
+
+Now do the same for a root container:
+[source,bash]
+----
+sudo podman run --name=root -d registry.access.redhat.com/ubi8/ubi sleep 999 
+----
+....
+sudo podman run --name=root -d registry.access.redhat.com/ubi8/ubi sleep 999
+Trying to pull registry.access.redhat.com/ubi8/ubi:latest...
+Getting image source signatures
+Checking if image destination supports signatures
+Copying blob 45cc8b7f2b43 done
+Copying blob 5f6bf015319e done
+Copying config 8215cb84fa done
+Writing manifest to image destination
+Storing signatures
+815dd74131decfed827b4087785e54b780eef12e44392ff1146c31179b29a855
+....
+
+----
+sudo podman ps
+----
+....
+CONTAINER ID  IMAGE                       COMMAND    CREATED         STATUS             PORTS  NAMES
+493da8f543de  ubi8/ubi  sleep 999  43 seconds ago  Up 42 seconds ago         root
+....
+
+Note that podman automatically pulled down the UBI image for each request. This is because we hadn't used that image, before.
+
+=== Stopping and removing containers
+
+With grace:
+[source,bash]
+----
+podman stop rootless
+podman rm rootless
+
+sudo podman stop root
+sudo podman rm root
+----
+
+*NOTE:* You will get an error from the below commands, if you ran the commands above, since the containers are stopped, and their images removed.
+
+With brute force:
+[source,bash]
+----
+podman rm -f rootless
+sudo podman rm -f root
+----
+
+=== Container process information
+
+Podman top can be used to display information about the running process of the container. Use it to answer the following.
+
+What command is run when the container is run? 
+[source,bash]
+----
+podman run --name=rootless -d registry.access.redhat.com/ubi8/ubi sleep 999
+----
+How long has this container been running?
+[source,bash]
+----
+podman top -l args etime
+----
+
+Clean up:
+[source,bash]
+----
+podman rm -f rootless
+----
+
+=== User Namespace Support
+
+To observe user namespace support, you will run a rootless container and observe the UID and PID in both the container and host namespaces.
+
+Start by running a rootless container in the background: 
+[source,bash]
+----
+podman run --name sleepy -d registry.access.redhat.com/ubi8/ubi sleep 999
+----
+
+Next, run `podman top` to list the processes running in the container. Take note of the USER and the PID. The container process is running as the `ec2-user` user even though the container thinks it is `root`. This is user namespaces in action. 
+
+What does the `-l` option do?
+[source,bash]
+----
+podman top -l
+----
+
+Next, on the host, list the same container process and take note of the UID and the PID:
+[source,bash]
+----
+ps -ef| grep sleep
+----
+....
+UID        PID  PPID  C STIME TTY          TIME CMD
+ec2-user  1701  1690  0 07:30 ?        00:00:00 /usr/bin/coreutils --coreutils-prog-shebang=sleep /usr/bin/sleep 999
+....
+
+Compare those ID's to the same process running in the hosts' namespace:
+
+TIP: Take note of 2 important concepts from this example.
+
+The `sleep` process in the container is owned by `root` but the process on the host is owned by `ec2-user`. This is user namespaces in action. The **fork/exec** model used by podman improves the security auditing of containers. It allows an administrator to identify users that run containers as root. Container engines that use a ***client/server*** model can't provide this.
+
+The `sleep` process in the container has a PID of 1 but on the host the PID is **rootless** (a PID >1). This is kernel namespaces in action.
+
+Clean up:
+[source,bash]
+----
+podman rm -f sleepy
+----
+
+=== Auditing containers
+
+Take note of the `ec2-user` UID:
+[source,bash]
+----
+sudo podman run --name sleepy --rm -it registry.access.redhat.com/ubi8/ubi bash -c "cat /proc/self/loginuid;echo"
+----
+....
+1000
+....
+
+Configure the kernel audit system to watch the `/etc/shadow` file:
+[source,bash]
+----
+sudo auditctl -w /etc/shadow 2>/dev/null
+----
+
+Run a privileged container that bind mounts the host's file system then touches `/etc/shadow`:
+[source,bash]
+----
+sudo podman run --privileged --rm -v /:/host registry.access.redhat.com/ubi8/ubi touch /host/etc/shadow
+----
+
+Examine the kernel audit system log to determine which user ran the malicious privileged container:
+[source,bash]
+----
+sudo ausearch -m path -ts recent -i | grep touch | grep --color=auto 'auid=[^ ]*'
+----
+....
+type=SYSCALL msg=audit(04/30/2019 11:03:03.384:425) : arch=x86_64 syscall=openat success=yes exit=3 a0=0xffffff9c a1=0x7ffeee3ecf5c a2=O_WRONLY|O_CREAT|O_NOCTTY|O_NONBLOCK a3=0x1b6 items=2 ppid=6168 pid=6180 auid=ec2-user uid=root gid=root euid=root suid=root fsuid=root egid=root sgid=root fsgid=root tty=(none) ses=11 comm=touch exe=/usr/bin/coreutils subj=unconfined_u:system_r:spc_t:s0 key=(null) 
+....
+
+TIP: Try this at home using another container engine based on a client/server model and you 
+will notice that the offending audit ID is reported as *4294967295* (i.e. an *unsignedint(-1)*).
+In other words, the malicious user is unknown.  
+
+=== UID Mapping
+
+A container administrator can make use podman's *--uidmap* option to force a range of UID's to be used. See *podman-run(1)* for details.
+
+Run a container that maps *5000* UIDs starting at *100,000*. This example maps uids *0-5000* in the container to the uids *100,000 - 104,999* on the host:
+[source,bash]
+----
+sudo podman run --uidmap 0:100000:5000 -d registry.access.redhat.com/ubi8/ubi sleep 1000
+----
+....
+98554ea68dae250deeaf78d9b20069716e40eeaf1804b070eb408c9894b1df5a
+....
+
+Check the container:
+[source,bash]
+----
+sudo podman top --latest user huser | grep --color=auto -B 1 100000
+----
+....
+USER   HUSER
+root   100000
+....
+
+Check the host:
+[source,bash]
+----
+ps -f --user=100000
+----
+....
+UID        PID  PPID  C STIME TTY          TIME CMD
+100000    2894  2883  0 12:40 ?        00:00:00 /usr/bin/coreutils --coreutils-prog-shebang=sleep /usr/bin/sleep 1000
+....
+
+Do the same beginning at uid `200,000`:
+[source,bash]
+----
+sudo podman run --uidmap 0:200000:5000 -d registry.access.redhat.com/ubi8/ubi sleep 1000
+----
+....
+0da91645b9c5e4d77f16f7834081811543f5d2c5e2a510e3092269cbd536d978
+....
+
+Check the container:
+[source,bash]
+----
+sudo podman top --latest user huser | grep --color=auto -B 1 200000
+----
+....
+USER   HUSER
+root   200000
+....
+
+Check the host:
+[source,bash]
+----
+ps -f --user=200000
+----
+....
+UID        PID  PPID  C STIME TTY          TIME CMD
+200000    3024  3011  0 12:41 ?        00:00:00 /usr/bin/coreutils --coreutils-prog-shebang=sleep /usr/bin/sleep 1000
+....
+
+=== Challenge
+
+The `--user` argument can be used to tell `podman` to use a specific effective user in the container namespace. In other words, repeat the previous example specifying the user to be `1001` which is `ec2-user`.This can be confirmed by examining the `/etc/passwd` file.
+
+The `top` results should look like:
+[source,bash]
+----
+sudo podman top -l user huser
+----
+....
+USER   HUSER
+1001   201001
+....
+
+=== References
+
+https://kubernetes.io/docs/concepts/workloads/pods/pod/[Pod concepts]
+
+https://access.redhat.com/documentation/en-us/red_hat_enterprise_linux/8/html/building_running_and_managing_containers/container-command-line-reference_building-running-and-managing-containers[podman user guide]
+
+{{< importPartial "footer/footer.html" >}}

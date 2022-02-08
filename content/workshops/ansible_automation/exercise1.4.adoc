@@ -1,0 +1,35 @@
+---
+title: "Exercise 1.4 - Running the apache-basic-playbook"
+workshops: ansible_automation
+workshop_weight: 14
+layout: lab
+---
+
+:icons: font
+:imagesdir: /workshops/ansible_automation/images
+:package_url: http://docs.ansible.com/ansible/package_module.html
+:service_url: http://docs.ansible.com/ansible/service_module.html
+
+= Exercise 1.4 - Running the Apache-Basic Playbook
+
+Congratulations!  You just wrote a playbook that incorporates some key Ansible concepts that you use in
+most, if not all, of your future playbooks.  Before you get too excited though, we should probably make sure it actually runs. So, let's do that now.
+
+== Section 1: Running your new apache playbook
+
+=== Step 1: Run your playbook
+Run your playbook, using the following command.
+[source,bash]
+----
+cd ~/apache-basic-playbook
+ansible-playbook site.yml
+----
+
+== Section 2: Review
+
+If successful, you should see standard output that looks very similar to the following.  If not, just let us
+know.  We'll help get things fixed up.
+
+image::stdout_2.png[caption="Figure 1: ", title="apache-basic-playbook stdout"]
+
+{{< importPartial "footer/footer.html" >}}

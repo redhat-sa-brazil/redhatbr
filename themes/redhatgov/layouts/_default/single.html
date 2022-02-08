@@ -1,0 +1,13 @@
+{{ partial "header" . }}
+
+<div class="jumbotron jumbotron-page text-center">
+  <h1>{{ .Title }}</h1>
+</div>
+
+<div class="container">
+  {{ .Content }}
+</div>
+
+{{ if .Params.redirectURL }}<meta http-equiv="refresh" content="1; url={{ .Params.redirectURL }}"/>{{ end }}
+
+{{ partial "footer" . }}

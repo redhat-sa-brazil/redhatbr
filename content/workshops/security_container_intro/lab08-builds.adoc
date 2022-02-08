@@ -1,0 +1,144 @@
+---
+title: "Lab 8.0 - Composing containers with Buildah"
+workshops: security_container_intro
+workshop_weight: 80
+layout: lab
+---
+
+:GUID: %guid%
+:markup-in-source: verbatim,attributes,quotes
+:toc:
+
+:badges:
+:icons: font
+:imagesdir: /workshops/security_container_intro/images
+:source-highlighter: highlight.js
+:source-language: yaml
+
+
+= Building Container Images
+
+This module will introduce _Buildah_, a command line tool for building https://https://www.opencontainers.org/[Open Container Initiative]
+compatible container images. _Buildah_ is easy to incorporate into scripts and build pipelines, and best of all, it doesn't require a running container daemon to build its image. You can read more about _Buildah_ at the https://buildah.io[buildah.io] web site. Also, have a look at the https://access.redhat.com/documentation/en-us/red_hat_enterprise_linux/8/html-single/building_running_and_managing_containers/index#building-container-images-with-buildah_building-running-and-managing-containers[buildah] chapter in the RHEL 8 documentation. 
+
+== Building from Universal Base Images
+
+Below are the basic steps for building a container image from a UBI. No `Dockerfile` needed. Give it a try! Get creative, the lab is almost finished!
+
+[source,bash]
+----
+buildah from --name=myapp registry.access.redhat.com/ubi8/ubi
+buildah run myapp -- dnf -y install python3
+----
+
+Now, add the rest of the container configuration:
+
+[source,bash]
+----
+echo "The container is working." > index.html
+buildah copy myapp index.html /
+buildah config --cmd 'python3 -m http.server' myapp
+buildah config --author "me_at_myorg_dot_com @twitter-handle" --label name=myapp myapp
+buildah commit myapp myapp
+podman run -d --name=test -p8000:8000 localhost/myapp
+----
+
+Use `curl` to test that everything worked.
+[source,bash]
+----
+curl localhost:8000
+----
+....
+The container is working.
+....
+
+Clean up
+[source,bash]
+----
+podman rm -f test
+----
+....
+284681fbc26f52dfdfa4c5a3b1680635984f9f1d2c1a97967ebe637297a646e5
+....
+
+== Build using Docker (BuD)
+
+Create the following *Dockerfile*
+[source,bash]
+----
+cat > Dockerfile <<EOF
+FROM registry.access.redhat.com/ubi8/ubi
+LABEL description="Minimal python web server" maintainer="yourname@mail.net"
+RUN dnf -y update; dnf -y clean all
+RUN dnf -y install python3 --setopt install_weak_deps=false; dnf -y clean all
+RUN echo "The python http.server module is running." > /index.html
+EXPOSE 8000
+CMD [ "/usr/bin/python3",  "-m", "http.server" ]
+EOF
+----
+
+Create a new container image from Dockerfile.
+[source,bash]
+----
+buildah bud -t buildahbuddemo Dockerfile
+----
+....
+STEP 1: FROM registry.access.redhat.com/ubi8/ubi
+STEP 2: LABEL description="Minimal python web server" maintainer="yourname@mail.net"
+...
+...
+...
+STEP 8: COMMIT buildahbuddemo
+Getting image source signatures
+Copying blob d3ada5af5602 skipped: already exists
+Copying blob 668db11eda93 skipped: already exists
+Copying blob 345745e99612 done
+Copying config a605153218 done
+Writing manifest to image destination
+Storing signatures
+a60515321805733cdd83216ad249fb857cdd2389ead39b2fc59446b1650e78fc
+a60515321805733cdd83216ad249fb857cdd2389ead39b2fc59446b1650e78fc
+....
+
+Inspect the container image meta data
+[source,bash]
+----
+buildah inspect --type image buildahbuddemo
+----
+
+Confirm the build and run the new container.
+[source,bash]
+----
+podman images
+----
+....
+REPOSITORY                                            TAG      IMAGE ID       CREATED         SIZE
+localhost/buildahbuddemo                              latest   a60515321805   2 minutes ago   257 MB
+....
+[source,bash]
+----
+podman run -it -d --name=test -p8000:8000 localhost/buildahbuddemo
+----
+....
+2abd1c20b89eac06a20e407e88689ee1067e7d36e27332fb21a143bc33246400
+....
+
+Use `curl` to test that everything worked.
+[source,bash]
+----
+curl localhost:8000
+----
+....
+The python http.server module is running.
+....
+
+Clean up
+[source,bash]
+----
+podman rm -f test
+----
+....
+284681fbc26f52dfdfa4c5a3b1680635984f9f1d2c1a97967ebe637297a646e5
+....
+
+{{< importPartial "footer/footer.html" >}}
